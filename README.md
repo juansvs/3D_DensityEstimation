@@ -1,0 +1,2 @@
+# 3D_DensityEstimation
+This repository has a code written in R to simulate movement of particles in three dimensions. The particles are detected by stationary detectors, and based on capture frequency density can be estimated. This is to accompany the paper entitled "Estimating animal density in three dimensions using capture-frequency data from remote detectors", by Juan S. Vargas et al, where the equation to estimate density is derived. 
