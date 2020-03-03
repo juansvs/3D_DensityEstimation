@@ -29,15 +29,15 @@ profArea = pi*detRadius^2*(2-2*cos(detAngle/2)+sin(detAngle/2))/4
 
 # Movement parameters. For the simple ideal gas model this is only the total distance that will 
 # be covered by each individual during the simulation
-movDist = 10*(xmax-xmin)
-stepSize = detRadius/10
+movDist = 5*(xmax-xmin)
+stepSize = detRadius/20
 nSteps = movDist/stepSize
 
 # Simulation parameters. 
-nIter = 20 # The number of iterations for each scenario
+nIter = 10 # The number of iterations for each scenario
 
 # Set the total number of detectors
-detectorCases = c(5, 10, 20)
+detectorCases = c(10)
 
 # Set the real density that we are trying to estimate
 realDens = 1
@@ -47,7 +47,6 @@ nInd = realDens*totalVol
 
 # Create a data frame to be used for plotting ggplot. This df should have a column for the time, 
 # one for the effort (time times number of detectors) and one for the density estimation. Rows will be added after every iteration
-dfrows = nSteps*nDetectors*nIter
 df <- data.frame(iteration = integer(), 
                  step = integer(), 
                  estdens = numeric(),
@@ -64,7 +63,7 @@ for (nDetectors in detectorCases) {
     
     # Set the direction that each detector is facing randomly. This direction is defined by two angles for each detector.
     detDir1 = runif(nDetectors, 0, 2*pi) # azimuth angle drawn between 0 and 2 Pi
-    detDir2 = acos(runif(nDetectors, -1, 1)) # colatitude angle is determined by drawing the cos of the angle from [-1:1]
+    detDir2 = runif(nDetectors, -1, 1) # colatitude angle is determined by drawing the cos of the angle from [-1:1]
     
     # We use the detection distance and the direction that each detector is facing to calculate a vector that defines the axis of the detection cone.
     # This vector is defined by three coordinates, x, y and z
@@ -79,37 +78,49 @@ for (nDetectors in detectorCases) {
     
     # Define a direction for each individual. This direction is constant throughout the simulation for the ideal gas model. The direction is defined by two angles, which are drawn at random from a uniform distribution
     indDir1 = runif(nInd, 0, 2*pi)
-    indDir2 = runif(nInd, 0, pi)
+    indDir2 = acos(runif(nInd, -1, 1))
     
-    # Find the final position of each individual. From an initial position and with a given direction and movement distance.
-    indXf = indXi + movDist*cos(indDir2)*cos(indDir1)
-    indYf = indYi + movDist*cos(indDir2)*sin(indDir1)
-    indZf = indZi + movDist*sin(indDir2)
     
     # Create an object to store the number of detections for each detector at each step.
     detectionCount = matrix(0, nDetectors, nSteps)
     # Create an object to store the number of individuals who are actually inside the sampling volume at each step
     iterCounter <- integer(nSteps)
-    # Open loop for individuals
-    for (ind in 1:nInd) {
-      # To find if an individual has crossed the detection volume, we divide each individual trajectory into many points, and determine if each point is within the detection volume. This is determined based on the distance to the detector and the angle with respect to the axis
-      # Divide each individual trajectory into many points. The number of points should be high enough that even small distances within the detection volume will be captured.
-      trajX = seq(from = indXi[ind], to = indXf[ind], length.out = nSteps)
-      trajY = seq(indYi[ind], indYf[ind], length.out = nSteps)
-      trajZ = seq(indZi[ind], indZf[ind], length.out = nSteps)
+    
+    prevDet <- matrix(0, nDetectors, nInd)
+    totDetections <- matrix(0, nDetectors, nInd)
+    
+    for (step in 1:nSteps) {
+      # Take a step, find new position
+      indXf = indXi + stepSize*sin(indDir2)*cos(indDir1)
+      indYf = indYi + stepSize*sin(indDir2)*sin(indDir1)
+      indZf = indZi + stepSize*cos(indDir2)
       
-      # Determine if the invidual is within the sampling volume
-      inX <- trajX > dxmin & trajX < dxmax
-      inY <- trajY > dxmin & trajY < dxmax
-      inZ <- trajZ > dxmin & trajZ < dxmax
-      inReg <- inX & inY & inZ
-      # Report it in a single object per iteration for all inviduals
-      iterCounter <- iterCounter+inReg
+      # Check if the individual is within the cube: for every x, y, and z determine if they are greater or lesser than the large cube boundaries
+      overX = as.numeric(indXf > xmax)
+      underX = as.numeric(indXf < xmin)
+      overY = as.numeric(indYf > xmax)
+      underY = as.numeric(indYf < xmin)
+      overZ = as.numeric(indZf > xmax)
+      underZ = as.numeric(indZf < xmin)
+      
+      # Rebound individuals that leave the cube. This is done using the difference between the final position and the cube boundary. The calculation gives the new position
+      indXf = (1-underX)*indXf + underX*(xmin-(indXf-xmin))
+      indXf = (1-overX)*indXf + overX*(xmax-(indXf-xmax))
+      indYf = (1-underY)*indYf + underY*(xmin-(indYf-xmin))
+      indYf = (1-overY)*indYf + overY*(xmax-(indYf-xmax))
+      indZf = (1-underZ)*indZf + underZ*(xmin-(indZf-xmin))
+      indZf = (1-overZ)*indZf + overZ*(xmax-(indZf-xmax))
+      
+      # Recalculate the direction angles. First part of the calculation leaves all individuals that are within the cube intact. Second part calculates the new angle, if the individual passed the x coordinates we change the new angle by subtracting the current angle from 2*pi
+      # If the individual surpassed the y boundaries, then the new angle is pi- old angle. Same for the second angle if the z boundaries are surpassed.
+      indDir1 = as.numeric(!overX & !underX) * indDir1 + as.numeric(overX | underX)*(pi-indDir1)
+      indDir1 = as.numeric(!overY & !underY) * indDir1 + as.numeric(overY | underY)*(2*pi-indDir1)
+      indDir2 = as.numeric(!overZ & !underZ) * indDir2 + as.numeric(overZ | underZ)*(pi-indDir2)
       
       # We need to calculate the difference betwen coordinates of each point and the detector. This will be used to calculate the dot product as well as the Euclidean distance . THis will create a matrix of dimensions (number of points on the trajectory, number of detectors)
-      vecDiffX = outer(detX, trajX, '-')
-      vecDiffY = outer(detY, trajY, '-')
-      vecDiffZ = outer(detZ, trajZ, '-')
+      vecDiffX = outer(detX, indXf, '-')
+      vecDiffY = outer(detY, indYf, '-')
+      vecDiffZ = outer(detZ, indZf, '-')
       
       # First we calculate the Euclidean distance between each point on the trajectory and the detector
       trajDist = sqrt(vecDiffX^2+vecDiffY^2+vecDiffZ^2)
@@ -134,23 +145,29 @@ for (nDetectors in detectorCases) {
       
       # Now we combine the two logical matrices to determine, for each detector if a point in the trajectory of the individual is contained within the detection region
       detected = isVisible & isClose
-      # We transform the detected matrix so that for every trajectory, every entry after the first detection is equal to 1 (already detected)
-      for (i in 1:nrow(detected)) {
-        detected[i,] = cummax(detected[i,])
-      }
-      # Add the transformed matrix to the detectionCount output. This object stores the result of a single iteration. It shows for every detector the number of detections at every time step, and therefore can be used to plot the density/accuracy as a funciton of effort (time*nDetectors)
-      detectionCount = detectionCount + detected
-    } # Close individuals loop
-    
-    # Calculate real density at every step. This gives a vector of length nSteps
-    stepDens <- iterCounter/sampVol
+      
+      # determine if a detection is new, ie if it was detected at the previous step it is still the same encounter and shouldn't be counted towrds density.
+      totDetections <- totDetections + as.numeric(detected > prevDet)
+      
+      # Update the previous detections object, this is the detections at the previous step
+      prevDet <- detected
+      
+      # Update position
+      indXi = indXf
+      indYi = indYf
+      indZi = indZf
+      
+      # Include the total count in the detection count object, which has the number of total detections per detector at every time step
+      detectionCount[,step] <- rowSums(totDetections)
+      
+    } # Close steps loop
     
     # Calculate density based on count frequency
     estDens = detectionCount/(profArea*stepSize)
     # Recalculate by including the number of steps up to that point
     stepCount = matrix(rep(1:nSteps, each = nDetectors),nrow = nDetectors)
     estDens = estDens/stepCount
-    
+
     # Reorganize data into columns for data frame
     dfi <- as.data.frame(x = estDens)
     
@@ -158,8 +175,8 @@ for (nDetectors in detectorCases) {
     dfi <- gather(data = dfi,
                   key = "step",
                   value = "estdens")
-    dfi$step <- rep(1:nSteps, each = nDetectors)
-    dfi$realdens <- rep(stepDens, each = nDetectors)
+    dfi$step <- 1:nSteps
+    dfi$realdens <- realDens
     dfi$iteration <- iter
     dfi$detectors <- nDetectors
     dfi$effort <- dfi$step*nDetectors
@@ -175,7 +192,7 @@ for (nDetectors in detectorCases) {
   
 } # Close detectors loop
 
-finaldf <- df[df$step==nSteps,]
+finaldf <- df %>% filter(step == max(step))
 finalmean = finaldf %>% group_by(detectors, iteration) %>% summarise(mean = mean(estdens), error = mean(error), cv = sd(estdens)/mean(estdens))
 
 meanDensdf = df %>% group_by(detectors, iteration, step, effort) %>% summarise(mean = mean(estdens), error = mean(error), cv = sd(estdens)/mean(estdens))
@@ -189,12 +206,6 @@ ggplot(meanDensdf, aes(x = effort, y = error)) +
   theme_bw(base_size = 18) +
   theme(legend.position = 'right') 
 # facet_grid(.~detectors, scales = 'free')
-
-ggplot(meanDensdf, aes(x = effort, y = error)) +  
-  geom_point(aes(color = detectors), alpha=0.5) +
-  labs(x = 'Effort', y = 'Relative error') + 
-  theme_bw(base_size = 18)
-# facet_grid(.~detectors)
 
 ggplot(meanDensdf, aes(x = effort, y = cv)) +  
   geom_smooth(aes(color = as.factor(detectors))) + 
